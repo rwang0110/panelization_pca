@@ -11,17 +11,6 @@ PLANAR = 0
 SCATTER = 1
 OTHER = -1
 
-def classify(sets):
-    """ 
-    takes in sets of points, calculates pca for each set
-    input: array of sets of numpy array vectors
-    output: attach labels to each point in each set
-    """
-    for s in sets:
-        label = classify_eigenvals(calculate_pca_of_set(s))
-    
-
-
 def calculate_pca_of_set(point_set):
     """
     Takes in a numpy array and calculates principle components of the set

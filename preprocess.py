@@ -28,8 +28,8 @@ if __name__ == "__main__":
     column_names, data = txt_to_pandas("data/36_N_First_RCS.txt")
     print("head:", data.head())
     print("tail: ", data.tail())
-    data = reduce_to_xyz(data, column_names)
     print("head:", data.head())
     print("tail: ", data.tail())
-    
+    print(data.to_numpy())
+    print(data.shape)
     #format: xyz rgb intensity?
