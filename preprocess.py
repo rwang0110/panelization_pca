@@ -1,6 +1,18 @@
 import numpy as np
 import pandas as pd
+import open3d as o3d 
+import os
 
+def txt_to_pcd(file_prefix):
+    """ converts text file to pcd"""
+    txt_file = file_prefix + ".txt"
+    pcd_file = file_prefix + ".pcd"
+
+    if os.path.isfile:
+        print("pcd {} exists, skipped".format(pcd_file))
+        return
+
+    
 def txt_to_pandas(file_path): 
     """converts txt files to pandas dataframe"""
     

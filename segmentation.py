@@ -12,7 +12,7 @@ def segment_data_nearest_neighbors(data_array):
     input: data_array, numpy array, r_pca, radius
     output: numpy array listing neighborhoods
     """
-    neighbors = NearestNeighbors(n_neighbors=100, algorithm="kd_tree", radius=10).fit(data_array)
+    neighbors = NearestNeighbors(n_neighbors=5, algorithm="ball_tree").fit(data_array)
     return neighbors.kneighbors(data_array)
 
 def segment_data(data_array, r_pca, point_index):
@@ -57,7 +57,8 @@ if __name__ == "__main__":
     column_names, data = preprocess.txt_to_pandas("data/36_N_First_RCS.txt")
     print("preprocess runtime:", time.clock() - start_time, "s")
     print(data)
-    dataset = preprocess.reduce_to_xyz(dataset, column_names)
+    data = preprocess.reduce_to_xyz(data, column_names)
+    print(data)
     start_time = time.clock()
     data = data.to_numpy()
     print("to numpy runtime: ", time.clock() - start_time, "s")
@@ -67,10 +68,9 @@ if __name__ == "__main__":
     print(dataset)
 
     #test runtime segmentation
-    dataset = preprocess.reduce_to_xyz(dataset, column_names)
     start_time = time.clock()
     distances, indices = segment_data_nearest_neighbors(dataset)
     print("segmentation runtime: ", time.clock() - start_time, "s\n")
     print(distances.shape, indices.shape)
-    #print("segmented:", res)
-    #print("squared distance:", sq_dist)
+    print("distances:", distances[:100])
+    print("indices:", indices[:100])
