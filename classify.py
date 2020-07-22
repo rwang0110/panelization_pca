@@ -1,15 +1,38 @@
 import numpy as np
-import pandas as pd
+#import pandas as pd
 from sklearn.decomposition import PCA
+import open3d as o3d 
 
 import preprocess
 
 #use pca on all points within a radius of r_pca
 r_pca = 0.0
-t_planar, t_scatter1, t_scatter2 = 2.0, 2.0, 2.0
+t_planar, t_scatter1, t_scatter2, t_linear = 2.3, 1.5, 1.65, 2.0
+LINEAR = 2
 PLANAR = 0
 SCATTER = 1
 OTHER = -1
+
+
+def segment_scatter_planar(pcd, r_pca=1.0, search='radius'):
+    """ 
+    takes in point cloud object, and determines scatter and planar points 
+    """ 
+    pcd_tree = o3d.geometry.KDTreeFlann(pcd)
+    num_points = len(pcd.points)
+
+    for i in range(num_points):
+        if search == "radius":
+            [_, idx, _] = pcd_tree.search_radius_vector_3d(pcd.points[i], r_pca)
+        else:
+            [_, idx, _] = pcd_tree.search_knn_vector_3d(pcd.points[i], r_pca)
+        ith_point_nearest_neighbors = np.asarray(pcd.points)[idx[1:], :]
+        classify_ith = classify_eigenvals(calculate_pca_of_set(ith_point_nearest_neighbors))
+        if classify_ith == SCATTER:
+            pcd.colors[i] = [1, 0, 0] 
+        if classify_ith == LINEAR:
+            pcd.colors[i] = [0, 0, 1]
+    return
 
 def calculate_pca_of_set(point_set):
     """
@@ -29,10 +52,13 @@ def classify_eigenvals(eigenvalues): #maybe replace this function with
     output: label (0-2)
     """
     lambda_max, lambda_mid, lambda_min = eigenvalues[0], eigenvalues[1], eigenvalues[2]
+    if lambda_max / lambda_mid > t_linear:
+        return LINEAR
     if lambda_min == 0 or lambda_mid / lambda_min > t_planar:
         return PLANAR
     elif lambda_max / lambda_mid < t_scatter1 and lambda_mid / lambda_min < t_scatter2:
         return SCATTER
+    
     else:
         return OTHER
 def classify_label_gauss(eigen_vals):

@@ -3,9 +3,12 @@ import numpy as np
 import pandas as pd
 import time
 from sklearn.neighbors import NearestNeighbors
-
+import open3d as o3d 
 import preprocess
 import classify
+
+def segmeent_data_nn_open3d(point_cloud):
+    
 def segment_data_nearest_neighbors(data_array):
     """ 
     segments data into neighbors based on nearest neighbors algorithm
