@@ -22,7 +22,7 @@ def down_sample(file_path, voxel_size):
 def down_sample_write(file_prefix, voxel_size):
     """ writes downsampled """ 
     pcd_file = file_prefix + ".pcd"
-    pcd_file_downsampled = file_prefix + "_downsampled_.pcd"
+    pcd_file_downsampled = file_prefix + "_downsampled_" +  str(voxel_size) + ".pcd"
 
     if os.path.isfile(pcd_file_downsampled):
         print("pcd file already exists")
@@ -38,5 +38,5 @@ def down_sample_write(file_prefix, voxel_size):
 
 if __name__ == "__main__":
     #sanity_check("data/36_N_First_RCS.pcd")
-
+    down_sample_write("data/36_N_First_RCS", 0.1)
     print("voxel down sampled")

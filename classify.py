@@ -7,32 +7,96 @@ import preprocess
 
 #use pca on all points within a radius of r_pca
 r_pca = 0.0
-t_planar, t_scatter1, t_scatter2, t_linear = 2.3, 1.5, 1.65, 2.0
+t_planar1, t_planar2 = 1.8, 2.0
+t_scatter1, t_scatter2 = 2.0 ,1.8
+t_linear = 2.0
+
 LINEAR = 2
 PLANAR = 0
 SCATTER = 1
 OTHER = -1
 
+def clean_planar(pcd, r_seg, k_nn, step_size, search, planar):
 
-def segment_scatter_planar(pcd, r_pca=1.0, search='radius'):
+    pcd_tree = o3d.geometry.KDTreeFlann(pcd)
+    for i in planar:
+        if search == 'radius':
+            [k, idx, _] = pcd_tree.search_radius_vector_3d(pcd.points[i], r_seg)
+        elif search == 'knn':
+            [k, idx, _] = pcd_tree.search_knn_vector_3d(pcd.points[i], k_nn)
+        if k < 3:
+            continue
+        colors = np.asarray(pcd.colors)[idx,:]
+        
+        planar_count = np.sum(colors == [0, 1, 0])
+        scatter_count = np.sum(colors == [1, 0, 0])
+        if planar_count / k > 0.8:
+            np.asarray(pcd.colors)[idx,:] = [0, 1, 0]
+        elif scatter_count / k > 0.6:
+            np.asarray(pcd.colors)[idx,:] = [1, 0, 0]
+    
+def find_facade(pcd, scatter, planar, linear, dist_thresh):
+    """ uses open3d ransac algorithm to find a facade""" 
+    
+    _, inliers = pcd.segment_plane(distance_threshold=dist_thresh,
+                                        ransac_n=3,
+                                         num_iterations=1000)
+
+    for index in inliers:
+        if index in scatter:
+            scatter.remove(index)
+            planar.append(index)
+        elif index in linear:
+            linear.remove(index)
+            planar.append(index)
+
+def isolated_density_filter(pcd, r_threshhold):
+    """ remove_radius_outliers removes every point which has fewer than 5 neighbors within a radius"""
+    pcd.remove_radius_outlier(15, r_threshhold)
+
+def segment_scatter_planar(pcd, r_pca=1.0, k_nn = 500, search='radius'):
     """ 
-    takes in point cloud object, and determines scatter and planar points 
+    takes in point cloud object, and determines scatter and planar points
+    returns tuple of 4 open3d IntVectors
     """ 
     pcd_tree = o3d.geometry.KDTreeFlann(pcd)
     num_points = len(pcd.points)
 
+    scatter_set = o3d.utility.IntVector()
+    linear_set = o3d.utility.IntVector()
+    planar_set = o3d.utility.IntVector()
+    other_set = o3d.utility.IntVector()
+    
     for i in range(num_points):
-        if search == "radius":
-            [_, idx, _] = pcd_tree.search_radius_vector_3d(pcd.points[i], r_pca)
-        else:
-            [_, idx, _] = pcd_tree.search_knn_vector_3d(pcd.points[i], r_pca)
-        ith_point_nearest_neighbors = np.asarray(pcd.points)[idx[1:], :]
-        classify_ith = classify_eigenvals(calculate_pca_of_set(ith_point_nearest_neighbors))
+        if search == 'radius':
+            [k, idx, _] = pcd_tree.search_radius_vector_3d(pcd.points[i], r_pca)
+        elif search == 'knn':
+            [k, idx, _] = pcd_tree.search_knn_vector_3d(pcd.points[i], k_nn)
+    
+        if k < 3:
+            continue
+
+        ith_point_nearest_neighbors = np.asarray(pcd.points)[idx, :]
+        #classify_ith = classify_eigenvals(calculate_pca_of_set(ith_point_nearest_neighbors))
+        classify_ith = classify_p_values(convert_pca_to_p(calculate_pca_of_set(ith_point_nearest_neighbors)))
         if classify_ith == SCATTER:
-            pcd.colors[i] = [1, 0, 0] 
-        if classify_ith == LINEAR:
-            pcd.colors[i] = [0, 0, 1]
-    return
+            scatter_set.append(i)
+        elif classify_ith == LINEAR:
+            linear_set.append(i)
+        elif classify_ith == PLANAR:
+            planar_set.append(i)
+        else:
+            other_set.append(i)
+        
+    return scatter_set, linear_set, planar_set, other_set
+
+def color_pcd_points(pcd, scatter_set, linear_set, planar_set, other_set):
+    #scatter
+    colors = np.asarray(pcd.colors)
+    colors[scatter_set] = [1, 0, 0]
+    colors[linear_set] = [0, 0, 1]
+    colors[planar_set] = [0, 1, 0]
+    colors[other_set] = [0.5, 0.5, 0.5]
 
 def calculate_pca_of_set(point_set):
     """
@@ -44,6 +108,32 @@ def calculate_pca_of_set(point_set):
     point_set_pca.fit(point_set)
     return point_set_pca.singular_values_
     
+def convert_pca_to_p(eigenvalues):
+    """this function takes lambda_max, _mid, _min,
+    and calculates _max / (_max + _mid + _ min) for each principle component
+    potentially better measure of eigenvalue classification than pure ratio
+    """ 
+    lambda_max, lambda_mid, lambda_min = eigenvalues[0], eigenvalues[1], eigenvalues[2]
+    total_sum = lambda_max + lambda_mid + lambda_min
+
+    return [lambda_max / total_sum, lambda_mid / total_sum, lambda_min / total_sum]
+
+def classify_p_values(p_vals):
+    """Brodu and Lague"""
+
+    p1, p2, p3 = p_vals[0], p_vals[1], p_vals[2]
+
+    if p1 > 0.33 and p2 < 0.31:
+        return LINEAR
+    elif p2 > 0.31 and p3 < 0.24:
+        return PLANAR
+    elif p3 > 0.24: 
+        return SCATTER
+    else: 
+        return OTHER
+    
+    return 
+
     
 def classify_eigenvals(eigenvalues): #maybe replace this function with 
     """
@@ -52,26 +142,15 @@ def classify_eigenvals(eigenvalues): #maybe replace this function with
     output: label (0-2)
     """
     lambda_max, lambda_mid, lambda_min = eigenvalues[0], eigenvalues[1], eigenvalues[2]
+    
     if lambda_max / lambda_mid > t_linear:
         return LINEAR
-    if lambda_min == 0 or lambda_mid / lambda_min > t_planar:
+    elif lambda_min == 0 or lambda_mid / lambda_min > t_planar1 and lambda_max / lambda_mid < t_planar2:
         return PLANAR
     elif lambda_max / lambda_mid < t_scatter1 and lambda_mid / lambda_min < t_scatter2:
         return SCATTER
-    
     else:
         return OTHER
-def classify_label_gauss(eigen_vals):
-    """
-    returns the most probable label
-    lalondr: 
-    S = (S_scatter, S_linear, S_surface)
-    pca eigenvalues = lambda_max, lambda_mid, lamba_min
-    S_scatter = lambda_max
-    S_linear = lambda_max - lambda_mid
-    S_surface = lambda_mid - lambda_min
-    """
-    return OTHER
 
 def classify_label(label):
     if label == PLANAR:
