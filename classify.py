@@ -16,25 +16,64 @@ PLANAR = 0
 SCATTER = 1
 OTHER = -1
 
-def clean_planar(pcd, r_seg, k_nn, step_size, search, planar):
+def grow_region(pcd, region, r_seg, k_nn, search):
+    pcd_tree = o3d.geometry.KDTreeFlann(pcd)
+    seen = set()
+    grown_region = o3d.utility.IntVector()
+    
+    for point in region:
+        if point not in seen:            
+            if search == 'radius':
+                [_, idx, _] = pcd_tree.search_radius_vector_3d(pcd.points[point], r_seg)
+            elif search == 'knn':
+                [_, idx, _] = pcd_tree.search_knn_vector_3d(pcd.points[point], k_nn)
+                      
+            seen.add(point)      
+            for j in idx:
+                if j not in seen:
+                    seen.add(j)
+                
+    grown_region = list(seen)
+    return grown_region
+def grouping(pcd, r_seg, k_nn, search, all_set):
 
     pcd_tree = o3d.geometry.KDTreeFlann(pcd)
-    for i in planar:
-        if search == 'radius':
-            [k, idx, _] = pcd_tree.search_radius_vector_3d(pcd.points[i], r_seg)
-        elif search == 'knn':
-            [k, idx, _] = pcd_tree.search_knn_vector_3d(pcd.points[i], k_nn)
-        if k < 3:
+    seen = set()
+    components = []
+    for i in range(len(pcd.points)):
+        if i in seen:
             continue
-        colors = np.asarray(pcd.colors)[idx,:]
-        
-        planar_count = np.sum(colors == [0, 1, 0])
-        scatter_count = np.sum(colors == [1, 0, 0])
-        if planar_count / k > 0.8:
-            np.asarray(pcd.colors)[idx,:] = [0, 1, 0]
-        elif scatter_count / k > 0.6:
-            np.asarray(pcd.colors)[idx,:] = [1, 0, 0]
+        if all_set[i] != SCATTER:
+            seen.add(i)
+            continue
+            
+        new_component = o3d.utility.IntVector()
     
+        queue = [i]
+        while len(queue) > 0:
+            index = queue.pop(0)
+            if index not in seen:
+                seen.add(index)
+                new_component = np.append(new_component, index)
+
+                if search == 'radius':
+                    [k, idx, _] = pcd_tree.search_radius_vector_3d(pcd.points[index], r_seg)
+                elif search == 'knn':
+                    [k, idx, _] = pcd_tree.search_knn_vector_3d(pcd.points[index], k_nn)
+                
+                if k < 3:
+                    continue
+                for j in idx:
+                    if j not in seen and all_set[j] == SCATTER:
+                        queue.append(j)
+
+        components.append(new_component)
+
+    final_components = []
+    for c in components:
+        if len(c) > 1000:
+            final_components.append(c)
+    return final_components
 def find_facade(pcd, scatter, planar, linear, dist_thresh):
     """ uses open3d ransac algorithm to find a facade""" 
     
@@ -66,7 +105,8 @@ def segment_scatter_planar(pcd, r_pca=1.0, k_nn = 500, search='radius'):
     linear_set = o3d.utility.IntVector()
     planar_set = o3d.utility.IntVector()
     other_set = o3d.utility.IntVector()
-    
+    all_set = o3d.utility.IntVector()
+
     for i in range(num_points):
         if search == 'radius':
             [k, idx, _] = pcd_tree.search_radius_vector_3d(pcd.points[i], r_pca)
@@ -80,15 +120,20 @@ def segment_scatter_planar(pcd, r_pca=1.0, k_nn = 500, search='radius'):
         #classify_ith = classify_eigenvals(calculate_pca_of_set(ith_point_nearest_neighbors))
         classify_ith = classify_p_values(convert_pca_to_p(calculate_pca_of_set(ith_point_nearest_neighbors)))
         if classify_ith == SCATTER:
+            all_set.append(SCATTER)
             scatter_set.append(i)
         elif classify_ith == LINEAR:
+            all_set.append(LINEAR)
             linear_set.append(i)
         elif classify_ith == PLANAR:
+            all_set.append(PLANAR)
             planar_set.append(i)
         else:
+            all_set.append(OTHER)
             other_set.append(i)
         
-    return scatter_set, linear_set, planar_set, other_set
+        
+    return all_set, scatter_set, linear_set, planar_set, other_set
 
 def color_pcd_points(pcd, scatter_set, linear_set, planar_set, other_set):
     #scatter
@@ -97,7 +142,7 @@ def color_pcd_points(pcd, scatter_set, linear_set, planar_set, other_set):
     colors[linear_set] = [0, 0, 1]
     colors[planar_set] = [0, 1, 0]
     colors[other_set] = [0.5, 0.5, 0.5]
-
+    
 def calculate_pca_of_set(point_set):
     """
     Takes in a numpy array and calculates principle components of the set
@@ -123,11 +168,11 @@ def classify_p_values(p_vals):
 
     p1, p2, p3 = p_vals[0], p_vals[1], p_vals[2]
 
-    if p1 > 0.33 and p2 < 0.31:
+    if p1 > 0.33 and p1 - p2 > 0.22:
         return LINEAR
-    elif p2 > 0.31 and p3 < 0.24:
-        return PLANAR
-    elif p3 > 0.24: 
+    elif p1 - p2 < 0.15 and p3 < 0.25:
+       return PLANAR
+    elif p1 - p3 < 0.33: 
         return SCATTER
     else: 
         return OTHER
