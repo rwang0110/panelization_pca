@@ -4,6 +4,7 @@ from sklearn.decomposition import PCA
 import open3d as o3d 
 
 import preprocess
+import vectorfunctions
 
 #use pca on all points within a radius of r_pca
 r_pca = 0.0
@@ -35,45 +36,7 @@ def grow_region(pcd, region, r_seg, k_nn, search):
                 
     grown_region = list(seen)
     return grown_region
-def grouping(pcd, r_seg, k_nn, search, all_set):
 
-    pcd_tree = o3d.geometry.KDTreeFlann(pcd)
-    seen = set()
-    components = []
-    for i in range(len(pcd.points)):
-        if i in seen:
-            continue
-        if all_set[i] != SCATTER:
-            seen.add(i)
-            continue
-            
-        new_component = o3d.utility.IntVector()
-    
-        queue = [i]
-        while len(queue) > 0:
-            index = queue.pop(0)
-            if index not in seen:
-                seen.add(index)
-                new_component = np.append(new_component, index)
-
-                if search == 'radius':
-                    [k, idx, _] = pcd_tree.search_radius_vector_3d(pcd.points[index], r_seg)
-                elif search == 'knn':
-                    [k, idx, _] = pcd_tree.search_knn_vector_3d(pcd.points[index], k_nn)
-                
-                if k < 3:
-                    continue
-                for j in idx:
-                    if j not in seen and all_set[j] == SCATTER:
-                        queue.append(j)
-
-        components.append(new_component)
-
-    final_components = []
-    for c in components:
-        if len(c) > 1000:
-            final_components.append(c)
-    return final_components
 def find_facade(pcd, scatter, planar, linear, dist_thresh):
     """ uses open3d ransac algorithm to find a facade""" 
     
@@ -105,34 +68,39 @@ def segment_scatter_planar(pcd, r_pca=1.0, k_nn = 500, search='radius'):
     linear_set = o3d.utility.IntVector()
     planar_set = o3d.utility.IntVector()
     other_set = o3d.utility.IntVector()
-    all_set = o3d.utility.IntVector()
+    all_set = {}
 
+    seen = set()
     for i in range(num_points):
-        if search == 'radius':
-            [k, idx, _] = pcd_tree.search_radius_vector_3d(pcd.points[i], r_pca)
-        elif search == 'knn':
-            [k, idx, _] = pcd_tree.search_knn_vector_3d(pcd.points[i], k_nn)
+        if i not in seen:
+            if search == 'radius':
+                [k, idx, _] = pcd_tree.search_radius_vector_3d(pcd.points[i], r_pca)
+            elif search == 'knn':
+                [k, idx, _] = pcd_tree.search_knn_vector_3d(pcd.points[i], k_nn)
     
-        if k < 3:
-            continue
+            if k < 3:
+                continue
 
-        ith_point_nearest_neighbors = np.asarray(pcd.points)[idx, :]
-        #classify_ith = classify_eigenvals(calculate_pca_of_set(ith_point_nearest_neighbors))
-        classify_ith = classify_p_values(convert_pca_to_p(calculate_pca_of_set(ith_point_nearest_neighbors)))
-        if classify_ith == SCATTER:
-            all_set.append(SCATTER)
-            scatter_set.append(i)
-        elif classify_ith == LINEAR:
-            all_set.append(LINEAR)
-            linear_set.append(i)
-        elif classify_ith == PLANAR:
-            all_set.append(PLANAR)
-            planar_set.append(i)
-        else:
-            all_set.append(OTHER)
-            other_set.append(i)
+            ith_point_nearest_neighbors = np.asarray(pcd.points)[idx, :]
+            #classify_ith = classify_eigenvals(calculate_pca_of_set(ith_point_nearest_neighbors))
+            classify_ith = classify_p_values(convert_pca_to_p(calculate_pca_of_set(ith_point_nearest_neighbors)))
         
-        
+            for j in idx:
+                if j not in seen: 
+                    seen.add(j) 
+                    if classify_ith == SCATTER:
+                        all_set[j] = SCATTER
+                        scatter_set.append(j)
+                    elif classify_ith == LINEAR:
+                        all_set[j] = LINEAR
+                        linear_set.append(j)
+                    elif classify_ith == PLANAR:
+                        all_set[j] = PLANAR
+                        planar_set.append(j)
+                    else:
+                        all_set[j] = OTHER
+                        other_set.append(j)
+                
     return all_set, scatter_set, linear_set, planar_set, other_set
 
 def color_pcd_points(pcd, scatter_set, linear_set, planar_set, other_set):

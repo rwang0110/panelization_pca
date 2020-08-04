@@ -1,79 +1,124 @@
-""" this document is meant to segmenet the data into sets of local neighborhoods""" 
 import numpy as np
 import pandas as pd
 import time
 from sklearn.neighbors import NearestNeighbors
+
 import open3d as o3d 
 import preprocess
 import classify
+import vectorfunctions
 
-def segmeent_data_nn_open3d(point_cloud):
-    
-def segment_data_nearest_neighbors(data_array):
-    """ 
-    segments data into neighbors based on nearest neighbors algorithm
-    input: data_array, numpy array, r_pca, radius
-    output: numpy array listing neighborhoods
-    """
-    neighbors = NearestNeighbors(n_neighbors=5, algorithm="ball_tree").fit(data_array)
-    return neighbors.kneighbors(data_array)
+def compute_equation_by_groups(pcd, groups, dist_thresh):
+    """ given a list of inliers in the pcd, returnt the equation and inliers of the equation """
+    equations = []
+    for surface in groups:
+        surface_pcd = pcd.select_by_index(surface)
 
-def segment_data(data_array, r_pca, point_index):
-    """ 
-    takes in pandas file, returns local neighborhoods of points within sphere
-
-    return Dataframe with points within 
-    """ 
-    res = np.array([data_array[point_index]])
-    r_pca_sq = r_pca * r_pca
-    print("distance:", r_pca_sq)
-    for i in range(len(data_array)): 
-        if i == point_index:
-            continue
-        if squared_distance_np(data_array, point_index, i) < r_pca_sq:
-            res = np.vstack([res,data_array[i]])
-    return res
-def squared_distance_np(data_array, x_index, y_index):
-    """ 
-    takes in numpy array datafile, and indices of two points, calculates
-    the distance between them
-    """
-    #print(x_point)
-    res = 0.0
-    for i in range(3):
-        res += (data_array[x_index][i] - data_array[y_index][i]) * (data_array[x_index][i] - data_array[y_index][i])
-    return res         
+        eq, _ = surface_pcd.segment_plane(distance_threshold=dist_thresh, ransac_n=3, num_iterations=1000)
+        equations.append(eq)
         
-def squared_distance_pd(datafile, x_index, y_index):
+    return equations
+
+def group_by_normals(pcd, r_seg, k_nn, search):
+    pcd_tree = o3d.geometry.KDTreeFlann(pcd)
+    num_points = len(pcd.points)
+    seen = set()
+    components = []
+    for i in range(num_points):
+        if i in seen:
+            continue
+        if i % 1000 == 0:
+            print("point", i, "of", num_points)
+        new_component = o3d.utility.IntVector()
+    
+        queue = [i]
+        while len(queue) > 0:
+            index = queue.pop(0)
+            if index not in seen:
+                seen.add(index)
+                new_component = np.append(new_component, index)
+
+                if search == 'radius'  :
+                    [k, idx, _] = pcd_tree.search_radius_vector_3d(pcd.points[index], r_seg)
+                elif search == 'knn':
+                    #radius search better
+                    [k, idx, _] = pcd_tree.search_knn_vector_3d(pcd.points[index], k_nn)
+                
+                if k < 3:
+                    continue
+                for j in idx:
+                    v1, v2 = pcd.normals[i], pcd.normals[j]
+                    if j not in seen and vectorfunctions.compute_cos(v1, v2) > 0.9:
+                        queue.append(j)
+                     if j % 1000 == 0:
+                        print("point", i, "of", num_points)
+        components.append(new_component)
+
+    final_components = []
+    for c in components:
+        if len(c) > 1000:
+            final_components.append(c)
+    return final_components
+    
+def grouping(pcd, r_seg, k_nn, search, all_set, label):
+
+    pcd_tree = o3d.geometry.KDTreeFlann(pcd)
+    seen = set()
+    components = []
+    for i in range(len(pcd.points)):
+        if i in seen:
+            continue
+        if all_set[i] != label:
+            seen.add(i)
+            continue
+            
+        new_component = o3d.utility.IntVector()
+    
+        queue = [i]
+        while len(queue) > 0:
+            index = queue.pop(0)
+            if index not in seen:
+                seen.add(index)
+                new_component = np.append(new_component, index)
+
+                if search == 'radius':
+                    [k, idx, _] = pcd_tree.search_radius_vector_3d(pcd.points[index], r_seg)
+                elif search == 'knn':
+                    [k, idx, _] = pcd_tree.search_knn_vector_3d(pcd.points[index], k_nn)
+                
+                if k < 3:
+                    continue
+                for j in idx:
+                    if j not in seen and all_set[j] == label:
+                        queue.append(j)
+
+        components.append(new_component)
+
+    final_components = []
+    for c in components:
+        if len(c) > 1000:
+            final_components.append(c)
+    return final_components
+
+
+def find_facades_ransac(pcd, num_facades, dist_thresh):
     """ 
-    takes in pandas datafile, and indices of two points, calculates
-    the distance between them
+    segments facades using ransac
+    returns a set of groups
     """
-    #print(x_point)
-    res = 0.0
-    for i in range(3):
-        res += (datafile.iloc[x_index][i] - datafile.iloc[y_index][i]) * (datafile.iloc[x_index][i] - datafile.iloc[y_index][i])
-    return res
+    groups = []
+    remaining_pcd = pcd
+    for i in range(num_facades):
+        print("iteration:", i + 1)
+        
+        equation, inliers = remaining_pcd.segment_plane(distance_threshold=dist_thresh, ransac_n=3, num_iterations=1000)
+        [a, b, c, d] = equation
+        print(f"Plane equation facade {i + 1:.2f}: {a:.2f}x + {b:.2f}y + {c:.2f}z + {d:.2f} = 0")
+        groups.append([equation, inliers])
+        remaining_pcd = remaining_pcd.select_by_index(inliers, invert=True)
+
+    return groups
+
 
 if __name__ == "__main__":
-    start_time = time.clock()
-    column_names, data = preprocess.txt_to_pandas("data/36_N_First_RCS.txt")
-    print("preprocess runtime:", time.clock() - start_time, "s")
-    print(data)
-    data = preprocess.reduce_to_xyz(data, column_names)
-    print(data)
-    start_time = time.clock()
-    data = data.to_numpy()
-    print("to numpy runtime: ", time.clock() - start_time, "s")
-    
-    #print("square distance: ", sq_dist)
-    dataset = data
-    print(dataset)
-
-    #test runtime segmentation
-    start_time = time.clock()
-    distances, indices = segment_data_nearest_neighbors(dataset)
-    print("segmentation runtime: ", time.clock() - start_time, "s\n")
-    print(distances.shape, indices.shape)
-    print("distances:", distances[:100])
-    print("indices:", indices[:100])
+    print("hello world")
